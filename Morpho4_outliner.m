@@ -17,6 +17,7 @@
 %%%setable parameters%%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 cfg = morpho.Config();
+addpath("bonus_scripts");
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %%%manage directories%%%
