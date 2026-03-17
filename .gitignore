@@ -1,0 +1,8 @@
+avi_reg/*
+avi_raw/*
+logs/*
+morph/*
+reference_run/*
+Morpho_reduce_paths.mat
+Morpho0_register_paths.mat
+.DS_Store
