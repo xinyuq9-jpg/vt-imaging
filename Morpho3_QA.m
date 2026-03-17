@@ -39,8 +39,8 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Shared QA mask reuse across ADB blocks
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-use_saved_QA_mask_if_available = 0;              % reuse block_1 QA mask for all blocks in same ADB group
-skip_manual_QA_if_shared_mask_loaded = 1;        % if shared QA mask exists, do not open QA editor
+use_saved_QA_mask_if_available = 1;              % reuse block_1 QA mask for all blocks in same ADB group
+skip_manual_QA_if_shared_mask_loaded = 0;        % if shared QA mask exists, do not open QA editor
 save_shared_QA_mask_for_group = 1;               % save cleaned QA mask for group reuse
 warn_if_QA_mask_missing = 1;                     % warn if no saved QA mask exists yet
 
