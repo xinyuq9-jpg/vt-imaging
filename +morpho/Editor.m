@@ -33,6 +33,7 @@ classdef Editor < handle
         hHelp
         hInfo
         hTitle
+        hCursor
         overlay_rgb
         bg_normalized
         info_y_cached double = NaN
@@ -42,6 +43,8 @@ classdef Editor < handle
         undo_count      double  = 0
 
         done            logical = false
+        dragging        logical = false
+        line_start      double  = []   % [x, y] for line draw first click
         ink             double  = 1
         mask_size       double
         exit_box_size   double
@@ -112,29 +115,7 @@ classdef Editor < handle
             obj.normalize_background();
             obj.redraw();
 
-            while ~obj.done
-                try
-                    w = waitforbuttonpress;
-                catch
-                    break;
-                end
-
-                if w == 0
-                    % Mouse click
-                    cp = get(obj.ax, 'CurrentPoint');
-                    x = round(cp(1,1));
-                    y = round(cp(1,2));
-                    obj.handle_click(x, y);
-                else
-                    % Key press
-                    key = get(obj.fig, 'CurrentCharacter');
-                    if ~isempty(key)
-                        obj.handle_key_char(upper(key));
-                    end
-                end
-
-                obj.redraw();
-            end
+            uiwait(obj.fig);
 
             result = obj.mask;
             obj.cleanup_boxes();
@@ -158,23 +139,120 @@ classdef Editor < handle
             set(obj.fig, 'Pointer', 'crosshair');
             obj.ax = axes('Parent', obj.fig, 'Position', [0 0 1 1]);
 
+            set(obj.fig, 'WindowButtonDownFcn',   @(~,~) obj.on_mouse_down());
+            set(obj.fig, 'WindowButtonMotionFcn',  @(~,~) obj.on_mouse_drag());
+            set(obj.fig, 'WindowButtonUpFcn',      @(~,~) obj.on_mouse_up());
+            set(obj.fig, 'KeyPressFcn',            @(~,e) obj.on_key_press(e));
+
             obj.overlay_rgb = morpho.display.overlay_color_to_rgb( ...
                 obj.overlay_color, obj.mask_size);
 
             [obj.hBase, obj.hOverlay] = morpho.display.init_mask_overlay( ...
                 obj.ax, obj.background, obj.mask, obj.overlay_opacity, obj.overlay_rgb);
 
+            % Brush cursor preview
+            hold(obj.ax, 'on');
+            obj.hCursor = plot(obj.ax, NaN, NaN, '-', ...
+                'Color', [1 1 1 0.5], 'LineWidth', 1.0);
+            hold(obj.ax, 'off');
+
+            % Lock axis limits to image dimensions
+            set(obj.ax, 'XLim', [0.5, obj.mask_size(2)+0.5], ...
+                        'YLim', [0.5, obj.mask_size(1)+0.5], ...
+                        'XLimMode', 'manual', 'YLimMode', 'manual');
+
             obj.init_help_text();
             obj.init_info_text();
             obj.update_status();
         end
 
-        function handle_key_char(obj, key)
+        % ====================
+        % Mouse callbacks
+        % ====================
+
+        function on_mouse_down(obj)
+            cp = get(obj.ax, 'CurrentPoint');
+            x = round(cp(1,1));
+            y = round(cp(1,2));
+
+            bs = obj.exit_box_size;
+            ss = obj.settings_box_size;
+
+            % Exit box (top-right)
+            if x > obj.mask_size(2) - bs && y <= bs
+                obj.finish();
+                return;
+            end
+
+            % Settings box (top-left)
+            if x <= ss && y <= ss
+                obj.open_settings();
+                obj.redraw();
+                return;
+            end
+
+            % Line draw mode: two-click point-to-point
+            if obj.allow_line_draw && obj.draw_mode == 'D'
+                if isempty(obj.line_start)
+                    obj.push_undo();
+                    obj.line_start = [x, y];
+                    return;
+                else
+                    obj.draw_line_to(x, y);
+                    obj.line_start = [];
+                    obj.redraw();
+                    return;
+                end
+            end
+
+            % Normal brush: start drag
+            obj.push_undo();
+            obj.apply_brush(x, y);
+            obj.dragging = true;
+            obj.redraw();
+        end
+
+        function on_mouse_drag(obj)
+            cp = get(obj.ax, 'CurrentPoint');
+            x = cp(1,1);
+            y = cp(1,2);
+
+            obj.update_cursor(x, y);
+
+            if ~obj.dragging, return; end
+
+            obj.apply_brush(round(x), round(y));
+            obj.redraw();
+        end
+
+        function on_mouse_up(obj)
+            if obj.dragging
+                obj.dragging = false;
+                obj.status_dirty = true;
+                obj.redraw();
+            end
+        end
+
+        % ====================
+        % Key callback
+        % ====================
+
+        function on_key_press(obj, evt)
+            key = upper(evt.Key);
+
+            % Ctrl+Z
+            if strcmp(key, 'Z') && any(strcmp(evt.Modifier, 'control'))
+                obj.pop_undo();
+                obj.status_dirty = true;
+                obj.redraw();
+                return;
+            end
+
             obj.status_dirty = true;
             switch key
                 case 'S'
                     obj.open_settings();
-                case {'U', char(26)}  % U or Ctrl+Z (ASCII 26)
+                case 'U'
                     obj.pop_undo();
                 case 'D'
                     if contains(obj.modes, 'D')
@@ -192,7 +270,8 @@ classdef Editor < handle
                         obj.ink = 1;
                     end
                 case 'Q'
-                    obj.done = true;
+                    obj.finish();
+                    return;
                 case 'N'
                     if obj.allow_frame_nav
                         obj.next_frame();
@@ -202,29 +281,15 @@ classdef Editor < handle
                         obj.prev_frame();
                     end
             end
+            obj.redraw();
         end
 
-        function handle_click(obj, x, y)
-            bs = obj.exit_box_size;
-            ss = obj.settings_box_size;
+        % ====================
+        % Brush / drawing
+        % ====================
 
-            % Exit box (top-right)
-            if x > obj.mask_size(2) - bs && y <= bs
-                obj.done = true;
-                return;
-            end
-
-            % Settings box (top-left)
-            if x <= ss && y <= ss
-                obj.open_settings();
-                return;
-            end
-
-            obj.push_undo();
-
-            if obj.allow_line_draw && obj.draw_mode == 'D'
-                obj.draw_line(x, y);
-            elseif contains(obj.modes, 'R') && obj.draw_mode == 'R'
+        function apply_brush(obj, x, y)
+            if contains(obj.modes, 'R') && obj.draw_mode == 'R'
                 [xb, yb] = morpho.display.expand_brush(x, y, obj.brush_size, obj.mask_size);
                 obj.mask(yb, xb) = obj.original(yb, xb) * obj.ink;
             else
@@ -233,17 +298,24 @@ classdef Editor < handle
             end
         end
 
-        function draw_line(obj, x1, y1)
-            obj.redraw();
-            try
-                w = waitforbuttonpress;
-            catch
+        function update_cursor(obj, x, y)
+            if obj.brush_size < 1
+                obj.hCursor.XData = NaN;
+                obj.hCursor.YData = NaN;
                 return;
             end
-            if w ~= 0, return; end  % ignore key presses
-            cp = get(obj.ax, 'CurrentPoint');
-            x2 = round(cp(1,1));
-            y2 = round(cp(1,2));
+            bs = obj.brush_size;
+            x1 = max(1, x - bs);
+            x2 = min(obj.mask_size(2), x + bs);
+            y1 = max(1, y - bs);
+            y2 = min(obj.mask_size(1), y + bs);
+            obj.hCursor.XData = [x1, x2, x2, x1, x1];
+            obj.hCursor.YData = [y1, y1, y2, y2, y1];
+        end
+
+        function draw_line_to(obj, x2, y2)
+            x1 = obj.line_start(1);
+            y1 = obj.line_start(2);
 
             n = max(abs(x2 - x1), abs(y2 - y1)) * 2;
             n = max(n, 2);
@@ -254,6 +326,10 @@ classdef Editor < handle
             idx = sub2ind(obj.mask_size, draw_y, draw_x);
             obj.mask(idx) = obj.ink;
         end
+
+        % ====================
+        % Settings
+        % ====================
 
         function open_settings(obj)
             if obj.show_context_frame && obj.show_opacity_control
@@ -308,6 +384,10 @@ classdef Editor < handle
             end
         end
 
+        % ====================
+        % Undo
+        % ====================
+
         function push_undo(obj)
             obj.undo_pos = obj.undo_pos + 1;
             idx = mod(obj.undo_pos - 1, obj.max_undo) + 1;
@@ -322,6 +402,10 @@ classdef Editor < handle
             obj.undo_pos = obj.undo_pos - 1;
             obj.undo_count = obj.undo_count - 1;
         end
+
+        % ====================
+        % Display
+        % ====================
 
         function redraw(obj)
             if obj.bg_dirty
@@ -429,6 +513,17 @@ classdef Editor < handle
                 s = sprintf('  |  Opacity: %.2f', obj.overlay_opacity);
             else
                 s = '';
+            end
+        end
+
+        % ====================
+        % Lifecycle
+        % ====================
+
+        function finish(obj)
+            obj.done = true;
+            if ishghandle(obj.fig)
+                uiresume(obj.fig);
             end
         end
 

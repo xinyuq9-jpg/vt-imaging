@@ -1,13 +1,29 @@
 function Morpho_run(opts)
 %MORPHO_RUN Run the VT-imaging pipeline (stages 0-5).
-%   Morpho_run()              — run all stages
+%   Morpho_run()              — prompt which stages to run
 %   Morpho_run(stages=3:5)    — run stages 3 to 5
 %   Morpho_run(stages=[1 3])  — run stages 1 and 3
     arguments
-        opts.stages (1,:) double = 0:5
+        opts.stages (1,:) double = double.empty
     end
 
     stage_names = ["register", "masking", "subsetter", "QA", "outliner", "finaliser"];
+
+    if isempty(opts.stages)
+        labels = arrayfun(@(i) sprintf("%d: %s", i, stage_names(i+1)), 0:5);
+        [sel, ok] = listdlg( ...
+            'ListString',       labels, ...
+            'SelectionMode',    'multiple', ...
+            'InitialValue',     1:6, ...
+            'ListSize',         [220 160], ...
+            'Name',             'Morpho Pipeline', ...
+            'PromptString',     'Select stages to run:');
+        if ~ok
+            fprintf('Pipeline cancelled.\n');
+            return;
+        end
+        opts.stages = sel - 1;  % listdlg returns 1-based indices
+    end
     stage_scripts = [ ...
         "Morpho0_register", ...
         "Morpho1_masking", ...

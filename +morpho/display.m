@@ -176,7 +176,7 @@ classdef display
                 case "red"
                     rgb = cat(3, ones(sz), zeros(sz), zeros(sz));
                 case "pink"
-                    rgb = cat(3, ones(sz), zeros(sz), ones(sz)/2);
+                    rgb = cat(3, ones(sz), zeros(sz), ones(sz)*129/255);
                 case "green"
                     rgb = cat(3, zeros(sz), ones(sz), zeros(sz));
                 otherwise
