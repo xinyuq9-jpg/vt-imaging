@@ -17,6 +17,7 @@ classdef Editor < handle
         allow_line_draw       logical = false
         allow_frame_nav       logical = false
 
+        filename        string  = ""
         frame_source    string  = ""
         frame_indices   double  = []
         current_frame   double  = 1
@@ -29,7 +30,12 @@ classdef Editor < handle
         ax
         hBase
         hOverlay
+        hHelp
+        hInfo
+        hTitle
         overlay_rgb
+        bg_normalized
+        info_y_cached double = NaN
 
         undo_stack      cell
         undo_pos        double  = 0
@@ -40,6 +46,8 @@ classdef Editor < handle
         mask_size       double
         exit_box_size   double
         settings_box_size double
+        status_dirty    logical = true
+        bg_dirty        logical = true
     end
 
     methods
@@ -57,6 +65,7 @@ classdef Editor < handle
                 opts.show_context_frame logical = false
                 opts.allow_line_draw logical = false
                 opts.allow_frame_nav logical = false
+                opts.filename string = ""
                 opts.frame_source string = ""
                 opts.frame_indices double = []
                 opts.current_frame double = 1
@@ -85,6 +94,7 @@ classdef Editor < handle
             obj.show_context_frame = opts.show_context_frame;
             obj.allow_line_draw = opts.allow_line_draw;
             obj.allow_frame_nav = opts.allow_frame_nav;
+            obj.filename = opts.filename;
             obj.frame_source = opts.frame_source;
             obj.frame_indices = opts.frame_indices;
             obj.current_frame = opts.current_frame;
@@ -99,22 +109,31 @@ classdef Editor < handle
 
         function result = run(obj)
             obj.init_figure();
-            obj.push_undo();
+            obj.normalize_background();
+            obj.redraw();
 
             while ~obj.done
-                obj.redraw();
-
                 try
-                    [x, y] = ginput(1);
+                    w = waitforbuttonpress;
                 catch
                     break;
                 end
 
-                if isempty(x), break; end
+                if w == 0
+                    % Mouse click
+                    cp = get(obj.ax, 'CurrentPoint');
+                    x = round(cp(1,1));
+                    y = round(cp(1,2));
+                    obj.handle_click(x, y);
+                else
+                    % Key press
+                    key = get(obj.fig, 'CurrentCharacter');
+                    if ~isempty(key)
+                        obj.handle_key_char(upper(key));
+                    end
+                end
 
-                x = round(double(x));
-                y = round(double(y));
-                obj.handle_click(x, y);
+                obj.redraw();
             end
 
             result = obj.mask;
@@ -136,9 +155,8 @@ classdef Editor < handle
             obj.mask(1:obj.settings_box_size, 1:obj.settings_box_size) = 1;
 
             obj.fig = morpho.display.create_editor_figure('Editor');
+            set(obj.fig, 'Pointer', 'crosshair');
             obj.ax = axes('Parent', obj.fig, 'Position', [0 0 1 1]);
-
-            set(obj.fig, 'KeyPressFcn', @(~,evt) obj.handle_key(evt));
 
             obj.overlay_rgb = morpho.display.overlay_color_to_rgb( ...
                 obj.overlay_color, obj.mask_size);
@@ -146,23 +164,17 @@ classdef Editor < handle
             [obj.hBase, obj.hOverlay] = morpho.display.init_mask_overlay( ...
                 obj.ax, obj.background, obj.mask, obj.overlay_opacity, obj.overlay_rgb);
 
+            obj.init_help_text();
+            obj.init_info_text();
             obj.update_status();
         end
 
-        function handle_key(obj, evt)
-            key = upper(evt.Key);
-
-            % Check for Ctrl+Z
-            if strcmp(key, 'Z') && ~isempty(evt.Modifier) && any(strcmp(evt.Modifier, 'control'))
-                obj.pop_undo();
-                obj.redraw();
-                return;
-            end
-
+        function handle_key_char(obj, key)
+            obj.status_dirty = true;
             switch key
                 case 'S'
                     obj.open_settings();
-                case 'U'
+                case {'U', char(26)}  % U or Ctrl+Z (ASCII 26)
                     obj.pop_undo();
                 case 'D'
                     if contains(obj.modes, 'D')
@@ -190,8 +202,6 @@ classdef Editor < handle
                         obj.prev_frame();
                     end
             end
-            obj.update_status();
-            obj.redraw();
         end
 
         function handle_click(obj, x, y)
@@ -226,13 +236,14 @@ classdef Editor < handle
         function draw_line(obj, x1, y1)
             obj.redraw();
             try
-                [x2, y2] = ginput(1);
+                w = waitforbuttonpress;
             catch
                 return;
             end
-            if isempty(x2), return; end
-            x2 = round(double(x2));
-            y2 = round(double(y2));
+            if w ~= 0, return; end  % ignore key presses
+            cp = get(obj.ax, 'CurrentPoint');
+            x2 = round(cp(1,1));
+            y2 = round(cp(1,2));
 
             n = max(abs(x2 - x1), abs(y2 - y1)) * 2;
             n = max(n, 2);
@@ -285,7 +296,7 @@ classdef Editor < handle
                         modes=obj.modes);
             end
 
-            obj.update_status();
+            obj.status_dirty = true;
         end
 
         function load_context_frame(obj)
@@ -293,6 +304,7 @@ classdef Editor < handle
                 frame_num = obj.frame_indices( ...
                     min(obj.current_frame, numel(obj.frame_indices)));
                 obj.background = morpho.video.read_single(obj.frame_source, frame_num);
+                obj.normalize_background();
             end
         end
 
@@ -304,54 +316,120 @@ classdef Editor < handle
         end
 
         function pop_undo(obj)
-            if obj.undo_count <= 1, return; end
-            obj.undo_pos = obj.undo_pos - 1;
-            obj.undo_count = obj.undo_count - 1;
+            if obj.undo_count < 1, return; end
             idx = mod(obj.undo_pos - 1, obj.max_undo) + 1;
             obj.mask = obj.undo_stack{idx};
+            obj.undo_pos = obj.undo_pos - 1;
+            obj.undo_count = obj.undo_count - 1;
         end
 
         function redraw(obj)
-            morpho.display.update_mask_overlay( ...
-                obj.hBase, obj.hOverlay, ...
-                obj.background, obj.mask, obj.overlay_opacity);
-            obj.update_status();
-            drawnow;
+            if obj.bg_dirty
+                obj.hBase.CData = obj.bg_normalized;
+                obj.bg_dirty = false;
+            end
+
+            obj.hOverlay.AlphaData = single(obj.mask) * obj.overlay_opacity;
+
+            if obj.status_dirty
+                obj.update_status();
+                obj.status_dirty = false;
+            end
+
+            drawnow limitrate;
+        end
+
+        function normalize_background(obj)
+            bg = single(obj.background);
+            bg = bg - min(bg(:));
+            bg = bg ./ max(bg(:) + eps);
+            obj.bg_normalized = bg;
+            obj.bg_dirty = true;
+        end
+
+        function init_help_text(obj)
+            help_lines = {};
+
+            if contains(obj.modes, 'D')
+                help_lines{end+1} = 'D = Draw';
+            end
+            help_lines{end+1} = 'E = Erase';
+            if contains(obj.modes, 'R') && ~obj.allow_frame_nav
+                help_lines{end+1} = 'R = Redraw';
+            end
+            help_lines{end+1} = 'S = Settings';
+            help_lines{end+1} = 'U = Undo  (Ctrl+Z)';
+            help_lines{end+1} = 'Q = Quit';
+
+            if obj.allow_frame_nav
+                help_lines{end+1} = 'N = Next frame';
+                help_lines{end+1} = 'B = Back frame';
+                help_lines{end+1} = 'R = Restore';
+            end
+
+            help_str = strjoin(help_lines, newline);
+
+            obj.hHelp = text(obj.ax, 5, 100, help_str, ...
+                'Units', 'pixels', ...
+                'VerticalAlignment', 'top', ...
+                'HorizontalAlignment', 'left', ...
+                'FontSize', 9, 'FontName', 'FixedWidth', ...
+                'Color', [1 1 1], ...
+                'BackgroundColor', [0 0 0 0.5], ...
+                'Margin', 4, ...
+                'EdgeColor', 'none');
+        end
+
+        function init_info_text(obj)
+            obj.hInfo = text(obj.ax, 5, 0, '', ...
+                'Units', 'pixels', ...
+                'VerticalAlignment', 'top', ...
+                'HorizontalAlignment', 'left', ...
+                'FontSize', 9, 'FontName', 'FixedWidth', ...
+                'Color', [1 1 0.6], ...
+                'BackgroundColor', [0 0 0 0.5], ...
+                'Margin', 4, ...
+                'EdgeColor', 'none');
+
+            obj.hTitle = title(obj.ax, '', 'FontSize', 10, 'FontName', 'FixedWidth');
         end
 
         function update_status(obj)
-            parts = {};
-            parts{end+1} = 'S=Settings';
-            parts{end+1} = sprintf('U=Undo(%d)', max(0, obj.undo_count - 1));
+            % Info text under help: filename + frame
+            if obj.filename ~= "" || obj.show_context_frame || obj.allow_frame_nav
+                info_parts = {};
+                if obj.filename ~= ""
+                    [~, name, ~] = fileparts(obj.filename);
+                    info_parts{end+1} = char(name);
+                end
+                if obj.show_context_frame || obj.allow_frame_nav
+                    info_parts{end+1} = sprintf('Frame %d/%d', obj.current_frame, obj.no_frames);
+                end
 
-            if contains(obj.modes, 'D')
-                parts{end+1} = 'D=Draw';
+                % Cache the y-position once (Extent query is expensive)
+                if isnan(obj.info_y_cached)
+                    drawnow;  % ensure Extent is valid
+                    help_ext = get(obj.hHelp, 'Extent');
+                    obj.info_y_cached = help_ext(2) - 4;
+                    obj.hInfo.Position = [5, obj.info_y_cached, 0];
+                end
+
+                obj.hInfo.String = strjoin(info_parts, '  |  ');
             end
-            if contains(obj.modes, 'R') && ~obj.allow_frame_nav
-                parts{end+1} = 'R=Redraw';
-            end
-            parts{end+1} = 'E=Erase';
-            parts{end+1} = 'Q=Quit';
 
-            if obj.allow_frame_nav
-                parts{end+1} = 'N=Next';
-                parts{end+1} = 'B=Back';
-                parts{end+1} = 'R=Restore';
-            end
+            % Title bar: mode, brush, opacity, undo
+            obj.hTitle.String = sprintf('Mode: %s  |  Brush: %d%s  |  Undo: %d', ...
+                obj.draw_mode, obj.brush_size, ...
+                obj.opacity_str(), ...
+                max(0, obj.undo_count));
+        end
 
-            parts{end+1} = sprintf('Mode:%s', obj.draw_mode);
-            parts{end+1} = sprintf('Brush:%d', obj.brush_size);
-
+        function s = opacity_str(obj)
             if obj.show_opacity_control
-                parts{end+1} = sprintf('Opacity:%.2f', obj.overlay_opacity);
+                s = sprintf('  |  Opacity: %.2f', obj.overlay_opacity);
+            else
+                s = '';
             end
-
-            if obj.show_context_frame || obj.allow_frame_nav
-                parts{end+1} = sprintf('Frame:%d/%d', obj.current_frame, obj.no_frames);
-            end
-
-            status = strjoin(parts, ' | ');
-            title(obj.ax, status, 'FontSize', 10, 'FontName', 'FixedWidth');
         end
 
         function cleanup_boxes(obj)
