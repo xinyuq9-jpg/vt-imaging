@@ -276,29 +276,7 @@ for iFile = 1:length(list_input_files) %loop through video files
                 %check for overreach
                 %under some conditions predictions may extend past the bottom of vt
                 %walking back from the bottom of the prediction until we hit VT
-                checking_bottoms = true; %toggle on
-                while checking_bottoms
-                    pixel_to_check = spline_mean_ind(end); %walk back from end
-                    if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                          checking_bottoms = false;
-
-                    else  %remove last pixel as dudd
-                        disp(strcat("Removed pixel ", string(pixel_to_check), " from bottom of trace."));
-                        spline_mean_ind = spline_mean_ind(spline_mean_ind~=pixel_to_check);
-
-                    end %end if
-                end %end while: checking bottoms
-
-                checking_fronts = true; %toggle on
-                while checking_fronts
-                    pixel_to_check = spline_mean_ind(1); %walk back from end
-                    if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                          checking_fronts = false;
-                    else  %remove last pixel as dudd
-                        disp(strcat("Removed pixel ", string(pixel_to_check), "from front of trace."));
-                        spline_mean_ind = spline_mean_ind(spline_mean_ind~=pixel_to_check);
-                    end %end if
-                end %end while: checking fronts
+                spline_mean_ind = trim_to_vt(spline_mean_ind, vt_output, f, frame_size);
 
 
                 spline_mean_mat(vt_output(:,:,f)==1) =0; %remove pixels that are already in the image
@@ -307,28 +285,7 @@ for iFile = 1:length(list_input_files) %loop through video files
             end %end if mean_spline
 
             if draw_connector== "upper_spline" %option to us the runwise upper boundary
-                checking_bottoms = true; %toggle on
-                while checking_bottoms
-                    pixel_to_check = spline_upper_ind(end); %walk back from end
-                    if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                          checking_bottoms = false;
-
-                    else  %remove last pixel as dudd
-                        disp(strcat("Removed pixel ", string(pixel_to_check), " from bottom of trace."));
-                        spline_upper_ind = spline_upper_ind(spline_upper_ind~=pixel_to_check);
-                    end %end if
-                end %end while: checking bottoms
-
-                checking_fronts = true; %toggle on
-                while checking_fronts
-                    pixel_to_check = spline_upper_ind(1); %walk back from end
-                    if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                          checking_fronts = false;
-                    else  %remove last pixel as dudd
-                        disp(strcat("Removed pixel ", string(pixel_to_check), "from front of trace."));
-                        spline_upper_ind = spline_upper_ind(spline_upper_ind~=pixel_to_check);
-                    end %end if
-                end %end while: checking fronts
+                spline_upper_ind = trim_to_vt(spline_upper_ind, vt_output, f, frame_size);
 
                 spline_upper_mat(vt_output(:,:,f)==1) =0; %remove pixels that are already in the image
                 vt_output(:,:,f) = vt_output(:,:,f) + spline_upper_mat;
@@ -388,29 +345,7 @@ for iFile = 1:length(list_input_files) %loop through video files
             edges = edges .* vt_ever; %mask edges to vt
             edges_ind = find(edges);  %liner index form
 
-            checking_bottoms = true; %toggle on
-            while checking_bottoms
-                pixel_to_check = edges_ind(end); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_bottoms = false;
-
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), " from bottom of trace."));
-                    edges_ind = edges_ind(edges_ind~=pixel_to_check);
-
-                end %end if
-            end %end while: checking bottoms
-
-            checking_fronts = true; %toggle on
-            while checking_fronts
-                pixel_to_check = edges_ind(1); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_fronts = false;
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), "from front of trace."));
-                    edges_ind = edges_ind(edges_ind~=pixel_to_check);
-                end %end if
-            end %end while: checking fronts
+            edges_ind = trim_to_vt(edges_ind, vt_output, f, frame_size);
 
             edges_mat= zeros(frame_size); %empty matrix sized to frame
             edges_mat(edges_ind) =1;             %matrix saving off lowess estimate
@@ -438,31 +373,7 @@ for iFile = 1:length(list_input_files) %loop through video files
             poly_sub2ind =sub2ind(frame_size, poly_y,poly_x); %convenient index format
 
             %check for overreach
-            %under some conditions predictions may extend past the bottom of vt
-            %walking back from the bottom of the prediction until we hit VT
-            checking_bottoms = true; %toggle on
-            while checking_bottoms
-                pixel_to_check = poly_sub2ind(end); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_bottoms = false;
-
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), " from bottom of trace."));
-                    poly_sub2ind = poly_sub2ind(poly_sub2ind~=pixel_to_check);
-
-                end %end if
-            end %end while: checking bottoms
-
-            checking_fronts = true; %toggle on
-            while checking_fronts
-                pixel_to_check = poly_sub2ind(1); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_fronts = false;
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), "from front of trace."));
-                    poly_sub2ind = poly_sub2ind(poly_sub2ind~=pixel_to_check);
-                end %end if
-            end %end while: checking fronts
+            poly_sub2ind = trim_to_vt(poly_sub2ind, vt_output, f, frame_size);
 
             poly_mat= zeros(frame_size); %empty matrix sized to frame
             poly_mat(poly_sub2ind) =1;             %matrix saving off lowess estimate
@@ -496,31 +407,7 @@ for iFile = 1:length(list_input_files) %loop through video files
 
 
             %check for overreach
-            %under some conditions predictions may extend past the bottom of vt
-            %walking back from the bottom of the prediction until we hit VT
-            checking_bottoms = true; %toggle on
-            while checking_bottoms
-                pixel_to_check = lowess_sub2ind(end); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_bottoms = false;
-
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), " from bottom of trace."));
-                    lowess_sub2ind = lowess_sub2ind(lowess_sub2ind~=pixel_to_check);
-
-                end %end if
-            end %end while: checking bottoms
-
-            checking_fronts = true; %toggle on
-            while checking_fronts
-                pixel_to_check = lowess_sub2ind(1); %walk back from end
-                if vt_output(pixel_to_check + (f-1)*frame_size(1)*frame_size(2)) > 0
-                      checking_fronts = false;
-                else  %remove last pixel as dudd
-                    disp(strcat("Removed pixel ", string(pixel_to_check), "from front of trace."));
-                    lowess_sub2ind = lowess_sub2ind(lowess_sub2ind~=pixel_to_check);
-                end %end if
-            end %end while: checking fronts
+            lowess_sub2ind = trim_to_vt(lowess_sub2ind, vt_output, f, frame_size);
 
 
             lowess_mat= zeros(frame_size); %empty matrix sized to frame
@@ -731,3 +618,23 @@ for iFile = 1:length(list_input_files) %loop through video files
 
 end %end run loop
 close
+
+function ind = trim_to_vt(ind, vt_output, f, frame_size)
+    % Trim pixel indices from both ends until they overlap with vt_output.
+    % Prevents infinite loops when no overlap exists.
+    offset = (f-1) * frame_size(1) * frame_size(2);
+
+    % Trim from end
+    while ~isempty(ind) && vt_output(ind(end) + offset) == 0
+        ind(end) = [];
+    end
+
+    % Trim from front
+    while ~isempty(ind) && vt_output(ind(1) + offset) == 0
+        ind(1) = [];
+    end
+
+    if isempty(ind)
+        warning('trim_to_vt: all pixels removed — no overlap with VT mask on frame %d.', f);
+    end
+end

@@ -44,17 +44,20 @@ function final = a_star(map, costs, start, goal)
     final = [];
     
     mapSize = size(map);
-    mapNumEl = numel(mapSize);
+    mapNumEl = numel(map);
 
     % Initialize the open set, with START
     openSet = false(mapSize);
     openSet(start) = true;
 
-    % Initialize closed set. Closed set consists of visited locations on 
+    % Initialize closed set. Closed set consists of visited locations on
     %  the map
     closedSet = false(mapSize);
-    
-    cameFrom = zeros(1, mapNumEl); 
+
+    cameFrom = zeros(1, mapNumEl);
+
+    maxIter = mapNumEl * 2;
+    iter = 0;
 
     gScore = inf(mapSize);
     gScore(start) = 0;
@@ -69,6 +72,12 @@ function final = a_star(map, costs, start, goal)
 
     % While the open set is not empty
     while any(openSet(:) > 0)
+
+        iter = iter + 1;
+        if iter > maxIter
+            warning('a_star:maxIter', 'A* exceeded max iterations (%d). No path found.', maxIter);
+            return
+        end
 
         % Find the minimum fScore within the open set
         [~, current] = min(fScore(:));
