@@ -479,15 +479,14 @@ classdef Editor < handle
         end
 
         function update_status(obj)
-            % Info text under help: filename + frame
+            % Info text under help: filename + frame on separate lines
             if obj.filename ~= "" || obj.show_context_frame || obj.allow_frame_nav
-                info_parts = {};
+                info_lines = {};
                 if obj.filename ~= ""
-                    [~, name, ~] = fileparts(obj.filename);
-                    info_parts{end+1} = char(name);
+                    info_lines{end+1} = char(obj.filename);
                 end
                 if obj.show_context_frame || obj.allow_frame_nav
-                    info_parts{end+1} = sprintf('Frame %d/%d', obj.current_frame, obj.no_frames);
+                    info_lines{end+1} = sprintf('Frame %d/%d', obj.current_frame, obj.no_frames);
                 end
 
                 % Cache the y-position once (Extent query is expensive)
@@ -498,7 +497,7 @@ classdef Editor < handle
                     obj.hInfo.Position = [5, obj.info_y_cached, 0];
                 end
 
-                obj.hInfo.String = strjoin(info_parts, '  |  ');
+                obj.hInfo.String = strjoin(info_lines, newline);
             end
 
             % Title bar: mode, brush, opacity, undo

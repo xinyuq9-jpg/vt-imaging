@@ -138,6 +138,11 @@ for iFile = 1:length(list_input_files) % loop through video files
 
         disp("ERASE/REDRAW pixels using Editor. R=Redraw, E=Erase, S=Settings, Q=Quit.")
 
+        % If a shared mask was loaded, apply it to the frequency map
+        if shared_QA_mask_loaded
+            vt_ever = vt_ever .* vt_ever_cleaned;
+        end
+
         vt_ever_og = vt_ever;
 
         editor = morpho.Editor(vt_ever, ...
