@@ -26,52 +26,23 @@ tAll = tic;
 script_dir = fileparts(mfilename('fullpath'));
 cd(script_dir);
 
-% Local folders (existence)
-if ~isfolder('avi_raw'), mkdir('avi_raw'); end
-if ~isfolder('avi_reg'), mkdir('avi_reg'); end
-if ~isfolder(fullfile('avi_reg','reg_trasforms')), mkdir(fullfile('avi_reg','reg_trasforms')); end
-if ~isfolder('reference_run'), mkdir('reference_run'); end
+cfg = morpho.Config();
 
-addpath('bonus_scripts');
+% Local folders (existence)
+cfg.ensure("avi_raw");
+cfg.ensure("avi_reg");
+cfg.ensure("reg_transforms");
+cfg.ensure("reference_run");
 
 %% ========================= CACHED REMOTE BASE =========================
 cache_file = fullfile(script_dir, 'Morpho0_register_paths.mat');
-remote_base = [];
-
-if isfile(cache_file)
-    S = load(cache_file);
-    if isfield(S,'remote_base'), remote_base = S.remote_base; end
-
-    cache_ok = ~isempty(remote_base) && isfolder(remote_base);
-    if cache_ok
-        q = sprintf('Reuse cached REMOTE BASE?\n\nREMOTE BASE:\n%s', remote_base);
-        choice = questdlg(q, 'Reuse cached folder?', 'Yes', 'No', 'Yes');
-        if isempty(choice), error('Cancelled.'); end
-        if strcmp(choice,'No')
-            remote_base = [];
-        else
-            logmsg('Using cached remote_base.');
-        end
-    else
-        logmsg('Cached remote_base not valid/mounted. Will prompt.');
-        remote_base = [];
-    end
-end
-
-if isempty(remote_base)
-    remote_base = uigetdir(pwd, 'Select REMOTE BASE folder (contains ADB** folders)');
-    if isequal(remote_base, 0)
-        error('No remote base folder selected.');
-    end
-end
-
-% Save/update cache
 try
-    save(cache_file, 'remote_base');
-    logmsg(['Saved cached remote_base to: ' cache_file]);
-catch ME
-    logmsg(['WARNING: Could not save cache file: ' ME.message]);
+    remote_base = morpho.io.prompt_remote_dir(cache_file, 'Select REMOTE BASE folder (contains ADB** folders)');
+catch
+    error('No remote base folder selected.');
 end
+morpho.io.save_cache(cache_file, 'remote_base', remote_base);
+morpho.io.logmsg(['Using remote_base: ' char(remote_base)]);
 
 %% ========================= DISCOVER ADB FOLDERS =========================
 adb_list = dir(fullfile(remote_base, 'ADB*'));
@@ -95,25 +66,25 @@ for iADB = 1:numel(adb_list)
     recon_path = fullfile(adb_path, 'recon');
 
     %% ========================= CLEAN STAGING BETWEEN ADB RUNS =========================
-    logmsg('Resetting staging folders (reference_run, avi_raw)...');
+    morpho.io.logmsg('Resetting staging folders (reference_run, avi_raw)...');
     if isfolder('reference_run'), rmdir('reference_run','s'); end
     mkdir('reference_run');
     if isfolder('avi_raw'), rmdir('avi_raw','s'); end
     mkdir('avi_raw');
 
-    logmsg('============================================================');
-    logmsg(sprintf('ADB %d/%d: %s', iADB, numel(adb_list), adb_name));
-    logmsg(['Recon path: ' recon_path]);
+    morpho.io.logmsg('============================================================');
+    morpho.io.logmsg(sprintf('ADB %d/%d: %s', iADB, numel(adb_list), adb_name));
+    morpho.io.logmsg(['Recon path: ' recon_path]);
 
     if ~isfolder(recon_path)
-        logmsg('Skipping (no recon folder).');
+        morpho.io.logmsg('Skipping (no recon folder).');
         continue;
     end
 
     % Find AVI candidates under recon (recursive)
     candidates = dir(fullfile(recon_path,'**','*.avi'));
     if isempty(candidates)
-        logmsg('No AVI files found under recon.');
+        morpho.io.logmsg('No AVI files found under recon.');
         continue;
     end
 
@@ -125,8 +96,8 @@ for iADB = 1:numel(adb_list)
     for ii = 1:numel(cand_full)
         [~, bname, ext] = fileparts(cand_full{ii});
 
-        expected_local_avi = fullfile('avi_reg', [adb_name '_' bname ext]);
-        expected_local_csv = fullfile('avi_reg', 'reg_trasforms', [adb_name '_' bname '_transform.csv']);
+        expected_local_avi = fullfile('avi_reg', [bname ext]);
+        expected_local_csv = fullfile('avi_reg', 'reg_trasforms', [bname '_transform.csv']);
 
         dA = dir(expected_local_avi);
         dC = dir(expected_local_csv);
@@ -139,10 +110,10 @@ for iADB = 1:numel(adb_list)
     n_done  = sum(done_mask);
     n_total = numel(done_mask);
     n_todo  = n_total - n_done;
-    logmsg(sprintf('Local pre-check: %d/%d already done, %d remaining.', n_done, n_total, n_todo));
+    morpho.io.logmsg(sprintf('Local pre-check: %d/%d already done, %d remaining.', n_done, n_total, n_todo));
 
     if n_todo == 0
-        logmsg('All AVIs in this ADB appear complete in local output. Skipping ADB.');
+        morpho.io.logmsg('All AVIs in this ADB appear complete in local output. Skipping ADB.');
         continue;
     end
 
@@ -158,12 +129,12 @@ for iADB = 1:numel(adb_list)
         'ListSize', [900 500]);
 
     if ~tf || isempty(idx)
-        logmsg('No files selected. Moving to next ADB.');
+        morpho.io.logmsg('No files selected. Moving to next ADB.');
         continue;
     end
 
     remote_selected = cand_full_todo(idx);
-    logmsg(sprintf('Selected %d AVI(s) to process in %s', numel(remote_selected), adb_name));
+    morpho.io.logmsg(sprintf('Selected %d AVI(s) to process in %s', numel(remote_selected), adb_name));
 
     %% ========================= ONE REFERENCE PER ADB =========================
     % Reference is the FIRST selected AVI for this ADB
@@ -174,44 +145,44 @@ for iADB = 1:numel(adb_list)
     ref_dst       = fullfile('reference_run', [adb_name '_REFERENCE' ref_ext]); % stable name per ADB
 
     % Copy REMOTE reference -> LOCAL avi_raw
-    logmsg(['Copy REMOTE reference -> LOCAL (avi_raw): ' remote_ref '  -->  ' local_ref_src]);
+    morpho.io.logmsg(['Copy REMOTE reference -> LOCAL (avi_raw): ' remote_ref '  -->  ' local_ref_src]);
     tCopyInRef = tic;
     ok = copyfile(remote_ref, local_ref_src);
     if ~ok
-        logmsg('ERROR: Copy REMOTE reference -> LOCAL failed. Skipping this ADB.');
+        morpho.io.logmsg('ERROR: Copy REMOTE reference -> LOCAL failed. Skipping this ADB.');
         continue;
     end
-    logmsg(sprintf('Reference copy-in finished (%.1fs).', toc(tCopyInRef)));
+    morpho.io.logmsg(sprintf('Reference copy-in finished (%.1fs).', toc(tCopyInRef)));
 
     % Copy LOCAL reference -> reference_run
-    logmsg(['Copy LOCAL reference -> reference_run: ' local_ref_src '  -->  ' ref_dst]);
+    morpho.io.logmsg(['Copy LOCAL reference -> reference_run: ' local_ref_src '  -->  ' ref_dst]);
     tCopyRef = tic;
     ok = copyfile(local_ref_src, ref_dst);
     if ~ok
-        logmsg('ERROR: Copy LOCAL reference -> reference_run failed. Skipping this ADB.');
+        morpho.io.logmsg('ERROR: Copy LOCAL reference -> reference_run failed. Skipping this ADB.');
         continue;
     end
-    logmsg(sprintf('Reference staging finished (%.1fs).', toc(tCopyRef)));
+    morpho.io.logmsg(sprintf('Reference staging finished (%.1fs).', toc(tCopyRef)));
 
     % Read reference frame ONCE (shared for this whole ADB)
-    reference_frame = 100;
+    reference_frame = cfg.register.reference_frame;
     try
         reference_video = VideoReader(ref_dst);
     catch ME
-        logmsg(['ERROR: Cannot open reference AVI: ' ME.message]);
+        morpho.io.logmsg(['ERROR: Cannot open reference AVI: ' ME.message]);
         continue;
     end
 
     try
         reference_image = read(reference_video, reference_frame);
     catch
-        logmsg('WARNING: reference_frame out of range for reference AVI. Using frame 1.');
+        morpho.io.logmsg('WARNING: reference_frame out of range for reference AVI. Using frame 1.');
         reference_image = read(reference_video, 1);
     end
     clear reference_video;
 
-    reference_image = ensure_gray_2d(reference_image);
-    logmsg(['ADB reference set to FIRST selected AVI: ' remote_ref]);
+    reference_image = morpho.registration.ensure_gray_2d(reference_image);
+    morpho.io.logmsg(['ADB reference set to FIRST selected AVI: ' remote_ref]);
 
     %% ========================= ONE ginput (mask selection) PER ADB =========================
     low  = min(reference_image(:));
@@ -224,7 +195,7 @@ for iADB = 1:numel(adb_list)
     cutoff_X = round(x(1));
     cutoff_Y = round(x(2));
 
-    logmsg(sprintf('Mask cutoff chosen (per ADB): cutoff_X=%d, cutoff_Y=%d', cutoff_X, cutoff_Y));
+    morpho.io.logmsg(sprintf('Mask cutoff chosen (per ADB): cutoff_X=%d, cutoff_Y=%d', cutoff_X, cutoff_Y));
 
     %% ========================= INNER LOOP (ONE AVI AT A TIME) =========================
     for k = 1:numel(remote_selected)
@@ -235,22 +206,22 @@ for iADB = 1:numel(adb_list)
         expected_local_avi = fullfile('avi_reg', [base_name ext]);
         expected_local_csv = fullfile('avi_reg', 'reg_trasforms', [base_name '_transform.csv']);
 
-        logmsg('------------------------------------------------------------');
-        logmsg(sprintf('File %d/%d in %s', k, numel(remote_selected), adb_name));
-        logmsg(['Remote source: ' remote_src]);
+        morpho.io.logmsg('------------------------------------------------------------');
+        morpho.io.logmsg(sprintf('File %d/%d in %s', k, numel(remote_selected), adb_name));
+        morpho.io.logmsg(['Remote source: ' remote_src]);
 
         din = dir(remote_src);
         if ~isempty(din)
-            logmsg(['Remote size: ' bytestr(din(1).bytes)]);
+            morpho.io.logmsg(['Remote size: ' morpho.registration.bytestr(din(1).bytes)]);
         end
 
         % Per-file skip check (resume-safe)
         dA = dir(expected_local_avi);
         dC = dir(expected_local_csv);
         if ~isempty(dA) && dA(1).bytes > 0 && ~isempty(dC) && dC(1).bytes > 0
-            logmsg('SKIP: local outputs already exist (non-empty):');
-            logmsg(['  AVI: ' expected_local_avi]);
-            logmsg(['  CSV: ' expected_local_csv]);
+            morpho.io.logmsg('SKIP: local outputs already exist (non-empty):');
+            morpho.io.logmsg(['  AVI: ' expected_local_avi]);
+            morpho.io.logmsg(['  CSV: ' expected_local_csv]);
             continue;
         end
 
@@ -261,30 +232,30 @@ for iADB = 1:numel(adb_list)
         if strcmp(remote_src, remote_ref)
             % Reference already staged before inner loop
             if isfile(local_src) && dir(local_src).bytes > 0
-                logmsg('Reference file already staged in avi_raw. Skipping duplicate copy.');
+                morpho.io.logmsg('Reference file already staged in avi_raw. Skipping duplicate copy.');
             else
-                logmsg('WARNING: Expected reference file missing in avi_raw. Re-copying once.');
+                morpho.io.logmsg('WARNING: Expected reference file missing in avi_raw. Re-copying once.');
                 ok = copyfile(remote_src, local_src);
                 if ~ok
-                    logmsg('ERROR: Copy REMOTE->LOCAL failed. Skipping this file.');
+                    morpho.io.logmsg('ERROR: Copy REMOTE->LOCAL failed. Skipping this file.');
                     continue;
                 end
             end
         else
-            logmsg(['Copy REMOTE -> LOCAL (avi_raw): ' remote_src '  -->  ' local_src]);
+            morpho.io.logmsg(['Copy REMOTE -> LOCAL (avi_raw): ' remote_src '  -->  ' local_src]);
             tCopyIn = tic;
             ok = copyfile(remote_src, local_src);
             if ~ok
-                logmsg('ERROR: Copy REMOTE->LOCAL failed. Skipping this file.');
+                morpho.io.logmsg('ERROR: Copy REMOTE->LOCAL failed. Skipping this file.');
                 continue;
             end
-            logmsg(sprintf('Copy-in finished (%.1fs).', toc(tCopyIn)));
+            morpho.io.logmsg(sprintf('Copy-in finished (%.1fs).', toc(tCopyIn)));
         end
 
         input_path = local_src;
 
         %% ========================= PROCESSING (STREAMING, SAME LOGIC) =========================
-        logmsg('Starting registration processing (streaming, behavior-matched)...');
+        morpho.io.logmsg('Starting registration processing (streaming, behavior-matched)...');
         tProc = tic;
 
         % Ensure output transform dir exists
@@ -304,15 +275,35 @@ for iADB = 1:numel(adb_list)
         try
             aviObj = VideoReader(input_path);
 
-            register_mri_stream_same( ...
-                aviObj, ...
-                reference_image, ...
-                cutoff_X, cutoff_Y, ...
-                tmp_out_avi, ...
-                tmp_out_csv);
+            % Setup registration
+            fixed_masked = morpho.registration.apply_cutoff_mask(reference_image, cutoff_X, cutoff_Y);
+            [optimizer, metric] = imregconfig('monomodal');
+            outView = imref2d(size(fixed_masked));
+
+            % Output video writer
+            vw = VideoWriter(tmp_out_avi, 'Grayscale AVI');
+            vw.FrameRate = aviObj.FrameRate;
+            open(vw);
+
+            % CSV header
+            fid = fopen(tmp_out_csv, 'wt');
+            fprintf(fid, '%s,%s,%s\n', 'x_translation', 'y_translation', 'rotation');
+            fclose(fid);
+
+            no_frames = morpho.video.frame_count(input_path);
+
+            for f = 1:no_frames
+                [tform, reg] = morpho.registration.register_frame( ...
+                    read(aviObj, f), fixed_masked, optimizer, metric, outView);
+                writeVideo(vw, reg);
+                dlmwrite(tmp_out_csv, [tform.T(3,1), tform.T(3,2), tform.T(1,2)], ...
+                    'delimiter', ',', '-append');
+                fprintf('\n   Registering frame %d of %d ... ', f, no_frames);
+            end
+            close(vw);
 
         catch ME
-            logmsg(['ERROR during streaming registration: ' ME.message]);
+            morpho.io.logmsg(['ERROR during streaming registration: ' ME.message]);
             continue;
         end
 
@@ -322,118 +313,23 @@ for iADB = 1:numel(adb_list)
         movefile(tmp_out_avi, out_avi, 'f');
         movefile(tmp_out_csv, out_csv, 'f');
 
-        logmsg(sprintf('Processing finished (%.1fs).', toc(tProc)));
+        morpho.io.logmsg(sprintf('Processing finished (%.1fs).', toc(tProc)));
 
         % Validate outputs
         dA = dir(out_avi);
         dC = dir(out_csv);
         if isempty(dA) || dA(1).bytes == 0 || isempty(dC) || dC(1).bytes == 0
-            logmsg('WARNING: Output validation failed (missing/empty).');
+            morpho.io.logmsg('WARNING: Output validation failed (missing/empty).');
         else
-            logmsg('Done with this file (local outputs written).');
-            logmsg(['  AVI: ' out_avi]);
-            logmsg(['  CSV: ' out_csv]);
+            morpho.io.logmsg('Done with this file (local outputs written).');
+            morpho.io.logmsg(['  AVI: ' out_avi]);
+            morpho.io.logmsg(['  CSV: ' out_csv]);
         end
 
     end
 
-    logmsg(['Finished ADB folder: ' adb_name]);
+    morpho.io.logmsg(['Finished ADB folder: ' adb_name]);
 
 end
 
-logmsg(sprintf('ALL DONE. Total runtime: %.1f minutes', toc(tAll)/60));
-
-%% ========================= HELPER FUNCTIONS =========================
-function logmsg(msg)
-    ts = datestr(now, 'yyyy-mm-dd HH:MM:SS');
-    fprintf('[%s] %s\n', ts, msg);
-end
-
-function I = ensure_gray_2d(I)
-    if ndims(I) == 3
-        I = I(:,:,1);
-        I = squeeze(I);
-    elseif ndims(I) == 4
-        I = I(:,:,1,1);
-        I = squeeze(I);
-    end
-end
-
-function s = bytestr(n)
-    units = {'B','KB','MB','GB','TB'};
-    s = double(n);
-    u = 1;
-    while s >= 1024 && u < numel(units)
-        s = s/1024;
-        u = u + 1;
-    end
-    s = sprintf('%.2f %s', s, units{u});
-end
-
-%% ========================= STREAMING (SAME AS register_mri) =========================
-function register_mri_stream_same(avi, fixed, cutoff_X, cutoff_Y, outAviPath, outCsvPath)
-% Streaming, behavior-matched version of your register_mri():
-% - Same no_frames logic (Duration*FrameRate, plus NumFrames guard)
-% - Same fixed masking: fixed(cutoff_Y:size_Y, 1:cutoff_X) = 0
-% - Same imregconfig('monomodal') and imregtform(...,'rigid',...)
-% - Same imwarp OutputView
-% - Writes reg frames directly to AVI; appends transform rows to CSV
-
-    % ---- Same frame count logic ----
-    no_frames = max(1, floor(avi.Duration * avi.FrameRate + 1e-6));
-    try
-        no_frames = min(no_frames, avi.NumFrames);
-    catch
-    end
-
-    fixed_masked = fixed;
-
-    size_Y = size(fixed_masked, 2);
-    fixed_masked(cutoff_Y:size_Y, 1:cutoff_X, :) = 0;
-
-    fixed_masked = ensure_gray_2d_local(fixed_masked);
-
-    [optimizer, metric] = imregconfig('monomodal');
-    outView = imref2d(size(fixed_masked));
-
-    % Output video writer
-    vw = VideoWriter(outAviPath, 'Grayscale AVI');
-    vw.FrameRate = avi.FrameRate;
-    open(vw);
-
-    % CSV header
-    fid = fopen(outCsvPath, 'wt');
-    fprintf(fid, '%s\t%s\t%s\n', 'x_translation,', 'y_translation,', 'rotation');
-    fclose(fid);
-
-    for f = 1:no_frames
-        this_frame = read(avi, f);
-        this_frame = ensure_gray_2d_local(this_frame);
-
-        tform = imregtform(this_frame, fixed_masked, 'rigid', optimizer, metric);
-        reg   = imwarp(this_frame, tform, 'OutputView', outView);
-
-        if ~isa(reg, 'uint8')
-            reg = im2uint8(reg);
-        end
-
-        writeVideo(vw, reg);
-
-        dlmwrite(outCsvPath, [tform.T(3,1), tform.T(3,2), tform.T(1,2)], ...
-            'delimiter', ',', '-append');
-
-        fprintf('\n   Registering frame %d of %d ... ', f, no_frames);
-    end
-
-    close(vw);
-end
-
-function I = ensure_gray_2d_local(I)
-    if ndims(I) == 3
-        I = I(:,:,1);
-        I = squeeze(I);
-    elseif ndims(I) == 4
-        I = I(:,:,1,1);
-        I = squeeze(I);
-    end
-end
+morpho.io.logmsg(sprintf('ALL DONE. Total runtime: %.1f minutes', toc(tAll)/60));
